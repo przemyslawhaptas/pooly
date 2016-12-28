@@ -42,6 +42,10 @@ defmodule Pooly.Server do
     end
   end
 
+  def handle_call(:status, _from, %{workers: workers, monitors: monitors} = state) do
+    {:reply, {length(workers), :ets.info(monitors, :size)}, state}
+  end
+
   def handle_cast({:checkin, worker}, %{workers: workers, monitors: monitors} = state) do
     case :ets.lookup(monitors, worker) do
       [{pid, ref}] ->
@@ -51,10 +55,6 @@ defmodule Pooly.Server do
       [] ->
         {:noreply, state}
     end
-  end
-
-  def handle_call(:status, _from, %{workers: workers, monitors: monitors} = state) do
-    {:reply, {length(workers), :ets.info(monitors, :size)}, state}
   end
 
   def handle_info(:start_worker_supervisor, state = %{sup: sup, mfa: mfa, size: size}) do
@@ -93,7 +93,7 @@ defmodule Pooly.Server do
   defp do_prepopulate(size, sup, workers) when size > 0 do
     do_prepopulate(size - 1, sup, [new_worker(sup) | workers])
   end
-  defp do_prepopulate(size, sup, workers) do
+  defp do_prepopulate(_size, _sup, workers) do
     workers
   end
 
@@ -102,5 +102,4 @@ defmodule Pooly.Server do
 
     worker
   end
-
 end

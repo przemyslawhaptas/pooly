@@ -16,7 +16,4 @@ defmodule Pooly.WorkerSupervisor do
 
     supervise(children, opts)
   end
-
-  ## Helper functions
-
 end
