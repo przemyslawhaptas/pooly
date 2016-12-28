@@ -3,7 +3,7 @@ defmodule Pooly.Server do
   import Supervisor.Spec
 
   defmodule State do
-    defstruct sup: nil, size: nil, mfa: nil, worker_sup: nil, workers: nil
+    defstruct sup: nil, size: nil, mfa: nil, worker_sup: nil, workers: nil, monitors: nil
   end
 
   ## API
@@ -12,10 +12,49 @@ defmodule Pooly.Server do
     GenServer.start_link(__MODULE__, [sup, pool_config], name: __MODULE__)
   end
 
+  def checkout do
+    GenServer.call(__MODULE__, :checkout)
+  end
+
+  def checkin(worker_pid) do
+    GenServer.cast(__MODULE__, {:checkin, worker_pid})
+  end
+
+  def status do
+    GenServer.call(__MODULE__, :status)
+  end
+
   ## Callbacks
 
   def init([sup, pool_config]) when is_pid(sup) do
-    do_init(pool_config, %State{sup: sup})
+    monitors = :ets.new(:monitors, [:private])
+    do_init(pool_config, %State{sup: sup, monitors: monitors})
+  end
+
+  def handle_call(:checkout, {from_pid, _ref}, %{workers: available_workers, monitors: monitors} = state) do
+    case available_workers do
+      [worker | rest] ->
+        ref = Process.monitor(from_pid)
+        true = :ets.insert(monitors, {worker, ref})
+        {:reply, worker, %{state | workers: rest}}
+      [] ->
+        {:reply, :noproc, state}
+    end
+  end
+
+  def handle_cast({:checkin, worker}, %{workers: workers, monitors: monitors} = state) do
+    case :ets.lookup(monitors, worker) do
+      [{pid, ref}] ->
+        true = Process.demonitor(ref)
+        true = :ets.delete(monitors, pid)
+        {:noreply, %{state | workers: [pid | workers]}}
+      [] ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_call(:status, _from, %{workers: workers, monitors: monitors} = state) do
+    {:reply, {length(workers), :ets.info(monitors, :size)}, state}
   end
 
   def handle_info(:start_worker_supervisor, state = %{sup: sup, mfa: mfa, size: size}) do
@@ -38,6 +77,7 @@ defmodule Pooly.Server do
   end
   defp do_init([], state) do
     send(self, :start_worker_supervisor)
+
     {:ok, state}
   end
 
@@ -45,4 +85,22 @@ defmodule Pooly.Server do
     opts = [restart: :temporary]
     supervisor(Pooly.WorkerSupervisor, [mfa], opts)
   end
+
+  defp prepopulate(size, sup) do
+    do_prepopulate(size, sup, [])
+  end
+
+  defp do_prepopulate(size, sup, workers) when size > 0 do
+    do_prepopulate(size - 1, sup, [new_worker(sup) | workers])
+  end
+  defp do_prepopulate(size, sup, workers) do
+    workers
+  end
+
+  defp new_worker(sup) do
+    {:ok, worker} = Supervisor.start_child(sup, [[]])
+
+    worker
+  end
+
 end
